@@ -1,0 +1,31 @@
+name: Go package
+
+on: [ push ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    steps:
+
+      # Action文档：
+      # https://github.com/marketplace/actions/setup-mongodb-with-password
+      - uses: getong/mongo-action@v1.1
+        with:
+          mongo version: '4.2-bionic'
+          host port: 27017
+          mongo username: 'root'
+          mongo password: 'UeGqAm8CxYGldMDLoNNt'
+
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.19'
+
+      - name: Test
+        run: go test -v ./...
+        env:
+          STORAGE_LOCK_MONGO_URI: "mongodb://root:UeGqAm8CxYGldMDLoNNt@127.0.0.1:27017/?connectTimeoutMS=300000"
+
