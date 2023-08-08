@@ -1,7 +1,6 @@
 package mongodb_storage
 
 import (
-	"errors"
 	"github.com/storage-lock/go-storage"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -47,13 +46,13 @@ func (x *MongoStorageOptions) SetConnectionManager(connectionProvider storage.Co
 
 func (x *MongoStorageOptions) Check() error {
 	if x.DatabaseName == "" {
-		return errors.New("mongodb database name can not be empty")
+		return ErrDatabaseNameEmpty
 	}
 	if x.CollectionName == "" {
-		return errors.New("mongodb collection name can not be empty")
+		return ErrCollectionNameEmpty
 	}
 	if x.ConnectionManager == nil {
-		return errors.New("ConnectionManager must set")
+		return ErrConnectionManagerNil
 	}
 	return nil
 }

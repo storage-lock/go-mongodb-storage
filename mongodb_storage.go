@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/golang-infrastructure/go-iterator"
+	ntp_time_provider "github.com/storage-lock/go-ntp-time-provider"
 	"github.com/storage-lock/go-storage"
 	storage_lock "github.com/storage-lock/go-storage-lock"
 	"go.mongodb.org/mongo-driver/bson"
@@ -22,12 +23,18 @@ type MongoStorage struct {
 	collection *mongo.Collection
 
 	session mongo.Session
+
+	timeProvider *ntp_time_provider.NTPTimeProvider
 }
 
 var _ storage.Storage = &MongoStorage{}
 
 // NewMongoStorage 创建一个基于MongoDB的存储引擎
 func NewMongoStorage(ctx context.Context, options *MongoStorageOptions) (*MongoStorage, error) {
+
+	if err := options.Check(); err != nil {
+		return nil, err
+	}
 
 	s := &MongoStorage{
 		options: options,
@@ -48,12 +55,6 @@ func (x *MongoStorage) GetName() string {
 }
 
 func (x *MongoStorage) Init(ctx context.Context) error {
-
-	// 参数检查
-	if err := x.options.Check(); err != nil {
-		return err
-	}
-
 	client, err := x.options.ConnectionManager.Take(ctx)
 	if err != nil {
 		return err
@@ -70,6 +71,8 @@ func (x *MongoStorage) Init(ctx context.Context) error {
 	x.session = session
 	x.database = database
 	x.collection = collection
+
+	x.timeProvider = ntp_time_provider.NewNTPTimeProvider(nil)
 
 	return nil
 }
@@ -106,7 +109,7 @@ func (x *MongoStorage) UpdateWithVersion(ctx context.Context, lockId string, exc
 	return nil
 }
 
-func (x *MongoStorage) InsertWithVersion(ctx context.Context, lockId string, version storage.Version, lockInformation *storage.LockInformation) error {
+func (x *MongoStorage) CreateWithVersion(ctx context.Context, lockId string, version storage.Version, lockInformation *storage.LockInformation) error {
 	_, err := x.collection.InsertOne(ctx, &MongoLock{
 		// 锁的ID作为唯一约束，保证同一个锁锁只会存在一个
 		ID:             lockId,
@@ -177,8 +180,8 @@ func (x *MongoStorage) Get(ctx context.Context, lockId string) (string, error) {
 }
 
 func (x *MongoStorage) GetTime(ctx context.Context) (time.Time, error) {
-	// TODO 日了狗啊，到底该怎么拿Mongo服务器时间啊，或者随便找个NTP服务器来作为时间源？反正只要时间源统一就可以了...
-	return time.Now(), nil
+	// MongoDB没找到好的办法拿数据库实例的时间，这里就使用一个公共的NTP作为时间源吧
+	return x.timeProvider.GetTime(ctx)
 }
 
 func (x *MongoStorage) Close(ctx context.Context) error {

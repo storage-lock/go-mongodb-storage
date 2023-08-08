@@ -62,5 +62,8 @@ func (x *MongoConnectionManager) Return(ctx context.Context, connection *mongo.C
 
 func (x *MongoConnectionManager) Shutdown(ctx context.Context) error {
 	// 连接池关闭的时候断掉连接，即使它是被复用的
-	return x.client.Disconnect(ctx)
+	if x.client != nil {
+		return x.client.Disconnect(ctx)
+	}
+	return nil
 }

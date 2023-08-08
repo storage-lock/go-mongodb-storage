@@ -26,6 +26,9 @@ func (x *ListMongoLockIterator) Next() bool {
 
 func (x *ListMongoLockIterator) Value() *storage.LockInformation {
 	r := &storage.LockInformation{}
-	_ = x.cursor.Decode(&r)
+	err := x.cursor.Decode(&r)
+	if err != nil {
+		return nil
+	}
 	return r
 }
