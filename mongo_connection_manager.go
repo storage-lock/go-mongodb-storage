@@ -8,10 +8,10 @@ import (
 	"sync"
 )
 
-// MongoConnectionManager 根据URI连接Mongo服务器获取连接
+// MongoConnectionManager 负责维护与Mongo数据库的连接
 type MongoConnectionManager struct {
 
-	// 连接到数据库的选项
+	// 连接到数据库的地址
 	URI string
 
 	// Mongo客户端
@@ -22,8 +22,8 @@ type MongoConnectionManager struct {
 
 var _ storage.ConnectionManager[*mongo.Client] = &MongoConnectionManager{}
 
-// NewMongoConnectionManager 从Mongo uri创建连接管理器
-func NewMongoConnectionManager(uri string) *MongoConnectionManager {
+// NewMongoConnectionManagerFromURI 从Mongo uri创建连接管理器
+func NewMongoConnectionManagerFromURI(uri string) *MongoConnectionManager {
 	return &MongoConnectionManager{
 		URI: uri,
 	}
@@ -44,7 +44,9 @@ func (x *MongoConnectionManager) Name() string {
 
 func (x *MongoConnectionManager) Take(ctx context.Context) (*mongo.Client, error) {
 	x.clientOnce.Do(func() {
-		if x.client == nil {
+		// 当前还没有创建连接，并且也没有过错误（err主要是用来标记之前连接时发生的错误，有的话就不重复调用了）
+		if x.client == nil && x.err == nil {
+			// 此处暂不支持定制，如果想修改连接参数的话可以自行创建client从client创建ConnectionManager
 			client, err := mongo.Connect(ctx, options.Client().ApplyURI(x.URI))
 			if err != nil {
 				x.err = err
