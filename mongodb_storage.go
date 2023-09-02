@@ -9,6 +9,7 @@ import (
 	storage_lock "github.com/storage-lock/go-storage-lock"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"strings"
 	"time"
 )
 
@@ -117,6 +118,10 @@ func (x *MongoStorage) CreateWithVersion(ctx context.Context, lockId string, ver
 		Version:        version,
 		LockJsonString: lockInformation.ToJsonString(),
 	})
+	// 要把ID重复错误转为storage_lock内部的版本miss错误
+	if err != nil && strings.Contains(err.Error(), "id dup key") {
+		return storage_lock.ErrVersionMiss
+	}
 	return err
 }
 
