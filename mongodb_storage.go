@@ -73,6 +73,7 @@ func (x *MongoStorage) Init(ctx context.Context) error {
 	x.database = database
 	x.collection = collection
 
+	// MongoDB没找到好的方式拿服务器上的时间，于是就干脆使用NTP的时间了
 	x.timeProvider = ntp_time_provider.NewNTPTimeProvider(nil)
 
 	return nil
@@ -101,10 +102,8 @@ func (x *MongoStorage) UpdateWithVersion(ctx context.Context, lockId string, exc
 	if err != nil {
 		return err
 	}
+	// 只要是没修改成功，统一认为是miss了
 	if rs.ModifiedCount == 0 {
-		// TODO 这里返回的错误是不够准确的，可能还会出现：
-		// 1. 锁不存在
-		// 2. 锁存在但是不属于这个owner
 		return storage_lock.ErrVersionMiss
 	}
 	return nil
@@ -153,14 +152,6 @@ func (x *MongoStorage) DeleteWithVersion(ctx context.Context, lockId string, exc
 	return nil
 }
 
-//// IntToBytes 把int转为字节数组
-//func IntToBytes(n int) []byte {
-//	x := int32(n)
-//	bytesBuffer := bytes.NewBuffer([]byte{})
-//	binary.Write(bytesBuffer, binary.BigEndian, x)
-//	return bytesBuffer.Bytes()
-//}
-
 func (x *MongoStorage) Get(ctx context.Context, lockId string) (string, error) {
 	filter := bson.M{
 		"_id": bson.M{
@@ -190,9 +181,11 @@ func (x *MongoStorage) GetTime(ctx context.Context) (time.Time, error) {
 }
 
 func (x *MongoStorage) Close(ctx context.Context) error {
-	if x.client != nil {
-		return x.client.Disconnect(ctx)
-	}
+	// 只是把引用置空，并不实际调用Close方法，因为认为连接是由专门的ConnectionManager管理的，这个Storage不应该管这个事
+	x.session = nil
+	x.collection = nil
+	x.database = nil
+	x.client = nil
 	return nil
 }
 

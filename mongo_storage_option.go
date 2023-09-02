@@ -26,7 +26,7 @@ func NewMongoStorageOptions() *MongoStorageOptions {
 }
 
 func NewMongoStorageOptionsWithURI(uri string) *MongoStorageOptions {
-	return NewMongoStorageOptions().SetConnectionManager(NewMongoConnectionManager(uri))
+	return NewMongoStorageOptions().SetConnectionManager(NewMongoConnectionManagerFromURI(uri))
 }
 
 func (x *MongoStorageOptions) SetDatabaseName(databaseName string) *MongoStorageOptions {
