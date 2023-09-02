@@ -118,10 +118,18 @@ func (x *MongoStorage) CreateWithVersion(ctx context.Context, lockId string, ver
 		LockJsonString: lockInformation.ToJsonString(),
 	})
 	// 要把ID重复错误转为storage_lock内部的版本miss错误
-	if err != nil && strings.Contains(err.Error(), "id dup key") {
+	if x.isDuplicateKey(err) {
 		return storage_lock.ErrVersionMiss
 	}
 	return err
+}
+
+// 判断是否是id重复的错误
+func (x *MongoStorage) isDuplicateKey(err error) bool {
+	if err != nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "id dup key") || strings.Contains(err.Error(), "_id_ dup key")
 }
 
 func (x *MongoStorage) DeleteWithVersion(ctx context.Context, lockId string, exceptedVersion storage.Version, lockInformation *storage.LockInformation) error {
