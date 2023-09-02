@@ -126,7 +126,7 @@ func (x *MongoStorage) CreateWithVersion(ctx context.Context, lockId string, ver
 
 // 判断是否是id重复的错误
 func (x *MongoStorage) isDuplicateKey(err error) bool {
-	if err != nil {
+	if err == nil {
 		return false
 	}
 	return strings.Contains(err.Error(), "id dup key") || strings.Contains(err.Error(), "_id_ dup key")
