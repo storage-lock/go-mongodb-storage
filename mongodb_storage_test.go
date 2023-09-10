@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestNewMongoStorage(t *testing.T) {
+func TestMongoStorage(t *testing.T) {
 	envName := "STORAGE_LOCK_MONGO_URI"
 	uri := os.Getenv(envName)
 	assert.NotEmpty(t, uri)

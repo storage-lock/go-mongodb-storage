@@ -84,10 +84,8 @@ func (x *MongoStorage) UpdateWithVersion(ctx context.Context, lockId string, exc
 		"_id": bson.M{
 			"$eq": lockId,
 		},
-		"owner_id": bson.M{
-			"$eq": lockInformation.OwnerId,
-		},
 		"version": bson.M{
+			//"$eq": json.Number(strconv.FormatUint(uint64(exceptedVersion), 10)),
 			"$eq": exceptedVersion,
 		},
 	}
@@ -185,7 +183,9 @@ func (x *MongoStorage) Get(ctx context.Context, lockId string) (string, error) {
 
 func (x *MongoStorage) GetTime(ctx context.Context) (time.Time, error) {
 	// MongoDB没找到好的办法拿数据库实例的时间，这里就使用一个公共的NTP作为时间源吧
+	// TODO
 	return x.timeProvider.GetTime(ctx)
+	//return time.Now(), nil
 }
 
 func (x *MongoStorage) Close(ctx context.Context) error {
