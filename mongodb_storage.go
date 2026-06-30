@@ -55,6 +55,16 @@ func (x *MongoStorage) GetName() string {
 	return MongoStorageName
 }
 
+// Capabilities 声明 MongoDB 存储支持的能力
+// MongoDB 通过唯一索引 + 条件更新支持 CAS，
+// 通过 NTP 时间源提供可靠时间
+func (x *MongoStorage) Capabilities() []storage.StorageCapability {
+	return []storage.StorageCapability{
+		storage.CapabilityCAS,
+		storage.CapabilityReliableTime,
+	}
+}
+
 func (x *MongoStorage) Init(ctx context.Context) error {
 	client, err := x.options.ConnectionManager.Take(ctx)
 	if err != nil {
