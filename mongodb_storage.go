@@ -9,7 +9,6 @@ import (
 	storage_lock "github.com/storage-lock/go-storage-lock"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
-	"strings"
 	"time"
 )
 
@@ -110,8 +109,11 @@ func (x *MongoStorage) UpdateWithVersion(ctx context.Context, lockId string, exc
 	if err != nil {
 		return err
 	}
-	// 只要是没修改成功，统一认为是miss了
-	if rs.ModifiedCount == 0 {
+	// 漏洞修复：原用 ModifiedCount==0 判 miss，但 ModifiedCount 仅在文档"实际被修改"时才 +1；
+	// 若 filter 匹配但 $set 的值与原值完全相同（理论场景），ModifiedCount 可能为 0 却并非 miss。
+	// 改用 MatchedCount（filter 是否匹配到文档）判定，语义更准确。锁每次更新 version 自增，
+	// 实际触发"匹配但未修改"概率极低，但用 MatchedCount 是正确判定。
+	if rs.MatchedCount == 0 {
 		return storage_lock.ErrVersionMiss
 	}
 	return nil
@@ -133,11 +135,13 @@ func (x *MongoStorage) CreateWithVersion(ctx context.Context, lockId string, ver
 }
 
 // 判断是否是id重复的错误
+// 漏洞修复：原用 strings.Contains(err.Error(), "id dup key") 字符串匹配，依赖 driver 错误消息
+// 文本，driver 版本升级或服务端消息变化会误判。改用 driver 标准函数 mongo.IsDuplicateKeyError。
 func (x *MongoStorage) isDuplicateKey(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), "id dup key") || strings.Contains(err.Error(), "_id_ dup key")
+	return mongo.IsDuplicateKeyError(err)
 }
 
 func (x *MongoStorage) DeleteWithVersion(ctx context.Context, lockId string, exceptedVersion storage.Version, lockInformation *storage.LockInformation) error {
@@ -199,8 +203,14 @@ func (x *MongoStorage) GetTime(ctx context.Context) (time.Time, error) {
 }
 
 func (x *MongoStorage) Close(ctx context.Context) error {
-	// 只是把引用置空，并不实际调用Close方法，因为认为连接是由专门的ConnectionManager管理的，这个Storage不应该管这个事
-	x.session = nil
+	// 漏洞修复：原只把 x.session 置 nil，未调 session.EndSession()，导致 mongo server-side session
+	// 资源泄漏（每次 NewMongoStorage 产生一个未关闭的 session）。session 虽未用于事务（CAS 靠单语句
+	// 原子性），但仍需显式结束以释放服务端资源。
+	if x.session != nil {
+		x.session.EndSession(ctx)
+		x.session = nil
+	}
+	// 连接由 ConnectionManager 管理，Storage 只清空引用
 	x.collection = nil
 	x.database = nil
 	x.client = nil
