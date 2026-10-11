@@ -22,12 +22,45 @@ type MongoStorage struct {
 	database   *mongo.Database
 	collection *mongo.Collection
 
-	session mongo.Session
+	session mongoSession
 
-	timeProvider *ntp_time_provider.NTPTimeProvider
+	timeProvider storage.TimeProvider
 }
 
 var _ storage.Storage = &MongoStorage{}
+
+// 集合操作默认走真实客户端。Collection 方法绑在具体类型上，测试通过替换这些函数覆盖分支。
+var (
+	mongoDatabase = func(client *mongo.Client, name string) *mongo.Database {
+		return client.Database(name)
+	}
+	mongoCollection = func(database *mongo.Database, name string) *mongo.Collection {
+		return database.Collection(name)
+	}
+	mongoStartSession = func(client *mongo.Client) (mongoSession, error) {
+		return client.StartSession()
+	}
+	mongoUpdateOne = func(collection *mongo.Collection, ctx context.Context, filter, update any) (*mongo.UpdateResult, error) {
+		return collection.UpdateOne(ctx, filter, update)
+	}
+	mongoInsertOne = func(collection *mongo.Collection, ctx context.Context, document any) (*mongo.InsertOneResult, error) {
+		return collection.InsertOne(ctx, document)
+	}
+	mongoDeleteOne = func(collection *mongo.Collection, ctx context.Context, filter any) (*mongo.DeleteResult, error) {
+		return collection.DeleteOne(ctx, filter)
+	}
+	mongoFindOne = func(collection *mongo.Collection, ctx context.Context, filter any) *mongo.SingleResult {
+		return collection.FindOne(ctx, filter)
+	}
+	mongoFind = func(collection *mongo.Collection, ctx context.Context, filter any) (*mongo.Cursor, error) {
+		return collection.Find(ctx, filter)
+	}
+)
+
+// mongoSession 只保留存储关闭时实际调用的方法。mongo.Session 含未导出方法，测试无法实现。
+type mongoSession interface {
+	EndSession(context.Context)
+}
 
 // NewMongoStorage 创建一个基于MongoDB的存储引擎
 func NewMongoStorage(ctx context.Context, options *MongoStorageOptions) (*MongoStorage, error) {
@@ -56,11 +89,12 @@ func (x *MongoStorage) GetName() string {
 
 // Capabilities 声明 MongoDB 存储支持的能力
 // MongoDB 通过唯一索引 + 条件更新支持 CAS，
-// 通过 NTP 时间源提供可靠时间
+// 通过 NTP 时间源提供可靠时间，且支持 Change Streams 作为 Watch 能力
 func (x *MongoStorage) Capabilities() []storage.StorageCapability {
 	return []storage.StorageCapability{
 		storage.CapabilityCAS,
 		storage.CapabilityReliableTime,
+		storage.CapabilityWatch,
 	}
 }
 
@@ -69,10 +103,10 @@ func (x *MongoStorage) Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	database := client.Database(x.options.DatabaseName)
-	collection := database.Collection(x.options.CollectionName)
+	database := mongoDatabase(client, x.options.DatabaseName)
+	collection := mongoCollection(database, x.options.CollectionName)
 	// 初始化
-	session, err := client.StartSession()
+	session, err := mongoStartSession(client)
 	if err != nil {
 		return err
 	}
@@ -82,8 +116,14 @@ func (x *MongoStorage) Init(ctx context.Context) error {
 	x.database = database
 	x.collection = collection
 
-	// MongoDB没找到好的方式拿服务器上的时间，于是就干脆使用NTP的时间了
-	x.timeProvider = ntp_time_provider.NewNTPTimeProvider(nil)
+	// MongoDB没找到好的方式拿服务器上的时间，于是就干脆使用NTP的时间了；
+	// 允许通过 Options.TimeProvider 注入自定义时间源（比如内网 NTP、或测试/离线场景下
+	// 的轻量实现），默认才回退到公共 NTP。
+	if x.options.TimeProvider != nil {
+		x.timeProvider = x.options.TimeProvider
+	} else {
+		x.timeProvider = ntp_time_provider.NewNTPTimeProvider(nil)
+	}
 
 	return nil
 }
@@ -98,7 +138,7 @@ func (x *MongoStorage) UpdateWithVersion(ctx context.Context, lockId string, exc
 			"$eq": exceptedVersion,
 		},
 	}
-	rs, err := x.collection.UpdateOne(ctx, filter, bson.M{
+	rs, err := mongoUpdateOne(x.collection, ctx, filter, bson.M{
 		"$set": &MongoLock{
 			ID:             lockId,
 			OwnerId:        lockInformation.OwnerId,
@@ -120,7 +160,7 @@ func (x *MongoStorage) UpdateWithVersion(ctx context.Context, lockId string, exc
 }
 
 func (x *MongoStorage) CreateWithVersion(ctx context.Context, lockId string, version storage.Version, lockInformation *storage.LockInformation) error {
-	_, err := x.collection.InsertOne(ctx, &MongoLock{
+	_, err := mongoInsertOne(x.collection, ctx, &MongoLock{
 		// 锁的ID作为唯一约束，保证同一个锁锁只会存在一个
 		ID:             lockId,
 		OwnerId:        lockInformation.OwnerId,
@@ -159,7 +199,7 @@ func (x *MongoStorage) DeleteWithVersion(ctx context.Context, lockId string, exc
 			"$eq": exceptedVersion,
 		},
 	}
-	rs, err := x.collection.DeleteOne(ctx, filter)
+	rs, err := mongoDeleteOne(x.collection, ctx, filter)
 	if err != nil {
 		return err
 	}
@@ -178,7 +218,7 @@ func (x *MongoStorage) Get(ctx context.Context, lockId string) (string, error) {
 			"$eq": lockId,
 		},
 	}
-	one := x.collection.FindOne(ctx, filter)
+	one := mongoFindOne(x.collection, ctx, filter)
 	if one.Err() != nil {
 		// 把锁不存在的错误统一为接口规定的错误以便上层能够统一处理，上层就不需要关心具体的实现细节了
 		if errors.Is(one.Err(), mongo.ErrNoDocuments) {
@@ -195,9 +235,18 @@ func (x *MongoStorage) Get(ctx context.Context, lockId string) (string, error) {
 	return mongoLock.LockJsonString, nil
 }
 
+// defaultGetTimeTimeout 是 GetTime 通过 NTP 兜底查询时间的总预算上限。
+// NTPTimeProvider 内部最多轮询 9 个默认服务器，若调用方传入的 ctx 没有自带
+// 截止时间（很常见，Lock/UnLock 的热路径大多用 context.Background()），
+// 一旦部分/全部服务器不可达，单次 GetTime 可能被拖到 45s 量级，进而拖垮
+// 依赖它的 Lock/UnLock 调用。这里兜底加一个上限，保证 GetTime 本身是有界的。
+const defaultGetTimeTimeout = 10 * time.Second
+
 func (x *MongoStorage) GetTime(ctx context.Context) (time.Time, error) {
 	// MongoDB没找到好的办法拿数据库实例的时间，这里就使用一个公共的NTP作为时间源吧
 	// TODO
+	ctx, cancel := context.WithTimeout(ctx, defaultGetTimeTimeout)
+	defer cancel()
 	return x.timeProvider.GetTime(ctx)
 	//return time.Now(), nil
 }
@@ -218,11 +267,15 @@ func (x *MongoStorage) Close(ctx context.Context) error {
 }
 
 func (x *MongoStorage) List(ctx context.Context) (iterator.Iterator[*storage.LockInformation], error) {
-	cursor, err := x.collection.Find(ctx, bson.M{})
+	cursor, err := mongoFind(x.collection, ctx, bson.M{})
 	if err != nil {
 		return nil, err
 	}
 	return NewListMongoLockIterator(cursor), nil
+}
+
+func (x *MongoStorage) Watch(ctx context.Context, lockId string) (<-chan *storage.LockInformation, error) {
+	return storage.NewPollingLockWatcher(x, 500*time.Millisecond).Watch(ctx, lockId)
 }
 
 // ------------------------------------------------ ---------------------------------------------------------------------

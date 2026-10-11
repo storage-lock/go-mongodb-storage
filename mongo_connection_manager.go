@@ -25,6 +25,16 @@ type MongoConnectionManager struct {
 
 var _ storage.ConnectionManager[*mongo.Client] = &MongoConnectionManager{}
 
+// mongoConnect 默认建立真实连接，测试可替换。非法 URI 在拨号前返回错误。
+var (
+	mongoConnect = func(ctx context.Context, uri string) (*mongo.Client, error) {
+		return mongo.Connect(ctx, options.Client().ApplyURI(uri))
+	}
+	mongoDisconnect = func(client *mongo.Client, ctx context.Context) error {
+		return client.Disconnect(ctx)
+	}
+)
+
 // NewMongoConnectionManagerFromURI 从Mongo uri创建连接管理器
 func NewMongoConnectionManagerFromURI(uri string) *MongoConnectionManager {
 	return &MongoConnectionManager{
@@ -58,7 +68,7 @@ func (x *MongoConnectionManager) Take(ctx context.Context) (*mongo.Client, error
 		return x.client, nil
 	}
 	// 此处暂不支持定制，如果想修改连接参数的话可以自行创建client从client创建ConnectionManager
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(x.URI))
+	client, err := mongoConnect(ctx, x.URI)
 	if err != nil {
 		// 失败不缓存，下次 Take 可重试
 		return nil, err
@@ -78,7 +88,7 @@ func (x *MongoConnectionManager) Shutdown(ctx context.Context) error {
 	client := x.client
 	x.initMu.Unlock()
 	if client != nil {
-		return client.Disconnect(ctx)
+		return mongoDisconnect(client, ctx)
 	}
 	return nil
 }

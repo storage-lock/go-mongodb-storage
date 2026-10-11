@@ -16,6 +16,12 @@ type MongoStorageOptions struct {
 
 	// 集合名称
 	CollectionName string
+
+	// TimeProvider 可选，自定义时间源。MongoDB 本身没有便捷的方式拿到服务器时间，
+	// 默认使用公共 NTP（见 GetTime），但公共 NTP 依赖外网可达性，延迟也不稳定；
+	// 内网部署或测试场景可以通过这里注入自定义实现（比如指向内网 NTP，或直接用
+	// 本地时钟）来避免这个依赖。为空则回退到默认的 NTP 实现。
+	TimeProvider storage.TimeProvider
 }
 
 func NewMongoStorageOptions() *MongoStorageOptions {
@@ -41,6 +47,11 @@ func (x *MongoStorageOptions) SetCollectionName(collectionName string) *MongoSto
 
 func (x *MongoStorageOptions) SetConnectionManager(connectionProvider storage.ConnectionManager[*mongo.Client]) *MongoStorageOptions {
 	x.ConnectionManager = connectionProvider
+	return x
+}
+
+func (x *MongoStorageOptions) SetTimeProvider(timeProvider storage.TimeProvider) *MongoStorageOptions {
+	x.TimeProvider = timeProvider
 	return x
 }
 
