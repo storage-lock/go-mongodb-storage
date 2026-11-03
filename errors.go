@@ -12,4 +12,10 @@ var (
 
 	// ErrConnectionManagerNil 连接管理器没有指定
 	ErrConnectionManagerNil = fmt.Errorf("ConnectionManager can not nil")
+
+	// ErrMongoNotInit 存储尚未初始化（GetTime 需要客户端连接）
+	ErrMongoNotInit = fmt.Errorf("mongodb storage is not initialized")
+
+	// ErrMongoServerTimeUnavailable MongoDB 未在 hello 响应中返回 localTime
+	ErrMongoServerTimeUnavailable = fmt.Errorf("mongodb server time is unavailable")
 )

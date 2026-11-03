@@ -9,6 +9,8 @@ import (
 	storage_lock "github.com/storage-lock/go-storage-lock"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"time"
 )
 
@@ -54,6 +56,20 @@ var (
 	}
 	mongoFind = func(collection *mongo.Collection, ctx context.Context, filter any) (*mongo.Cursor, error) {
 		return collection.Find(ctx, filter)
+	}
+	// mongoServerTime 读取服务端时间，测试通过替换它覆盖时间源分支。
+	mongoServerTime = func(client *mongo.Client, ctx context.Context) (time.Time, error) {
+		var result struct {
+			LocalTime time.Time `bson:"localTime"`
+		}
+		opts := options.RunCmd().SetReadPreference(readpref.Primary())
+		if err := client.Database("admin").RunCommand(ctx, bson.D{{Key: "hello", Value: 1}}, opts).Decode(&result); err != nil {
+			return time.Time{}, err
+		}
+		if result.LocalTime.IsZero() {
+			return time.Time{}, ErrMongoServerTimeUnavailable
+		}
+		return result.LocalTime, nil
 	}
 )
 
@@ -243,12 +259,27 @@ func (x *MongoStorage) Get(ctx context.Context, lockId string) (string, error) {
 const defaultGetTimeTimeout = 10 * time.Second
 
 func (x *MongoStorage) GetTime(ctx context.Context) (time.Time, error) {
-	// MongoDB没找到好的办法拿数据库实例的时间，这里就使用一个公共的NTP作为时间源吧
-	// TODO
 	ctx, cancel := context.WithTimeout(ctx, defaultGetTimeTimeout)
 	defer cancel()
+
+	// 漏洞修复：原实现无条件走 NTP。NTP 依赖外网可达，每次 GetTime 都是一次公网
+	// 往返（实测 5~15s），且各客户端各自锚定不同时间基准，会让"租约何时过期"在
+	// 不同进程之间出现秒级漂移——租约可能被他人提前判为过期，直接破坏互斥性。
+	// MongoDB 自身能给出服务端时间（hello 命令的 localTime），单次 RTT 即可拿到，
+	// 且所有客户端读的是同一个时间基准。优先用它，失败才退回 NTP。
+	if now, err := x.serverTime(ctx); err == nil && !now.IsZero() {
+		return now, nil
+	}
 	return x.timeProvider.GetTime(ctx)
-	//return time.Now(), nil
+}
+
+// serverTime 通过 hello 命令读取 MongoDB 服务端时间。
+// 显式要求 primary 读，避免副本集下读到从节点时钟、把租约算歪。
+func (x *MongoStorage) serverTime(ctx context.Context) (time.Time, error) {
+	if x.client == nil {
+		return time.Time{}, ErrMongoNotInit
+	}
+	return mongoServerTime(x.client, ctx)
 }
 
 func (x *MongoStorage) Close(ctx context.Context) error {
