@@ -18,7 +18,7 @@ func TestGetTimePrefersServerTime(t *testing.T) {
 	t.Cleanup(func() { mongoServerTime = original })
 
 	serverNow := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
-	mongoServerTime = func(*mongo.Client, context.Context) (time.Time, error) {
+	mongoServerTime = func(*mongo.Client, string, context.Context) (time.Time, error) {
 		return serverNow, nil
 	}
 	got, err := s.GetTime(context.Background())
@@ -30,7 +30,7 @@ func TestGetTimePrefersServerTime(t *testing.T) {
 	}
 
 	// 服务端时间报错时回退到注入的时间源。
-	mongoServerTime = func(*mongo.Client, context.Context) (time.Time, error) {
+	mongoServerTime = func(*mongo.Client, string, context.Context) (time.Time, error) {
 		return time.Time{}, errors.New("hello failed")
 	}
 	fallback := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -43,7 +43,7 @@ func TestGetTimePrefersServerTime(t *testing.T) {
 	}
 
 	// 服务端返回零值同样视为不可用，不能把零值当时间写进租约。
-	mongoServerTime = func(*mongo.Client, context.Context) (time.Time, error) {
+	mongoServerTime = func(*mongo.Client, string, context.Context) (time.Time, error) {
 		return time.Time{}, nil
 	}
 	got, err = s.GetTime(context.Background())

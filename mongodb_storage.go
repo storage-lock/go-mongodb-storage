@@ -58,12 +58,15 @@ var (
 		return collection.Find(ctx, filter)
 	}
 	// mongoServerTime 读取服务端时间，测试通过替换它覆盖时间源分支。
-	mongoServerTime = func(client *mongo.Client, ctx context.Context) (time.Time, error) {
+	mongoServerTime = func(client *mongo.Client, databaseName string, ctx context.Context) (time.Time, error) {
 		var result struct {
 			LocalTime time.Time `bson:"localTime"`
 		}
 		opts := options.RunCmd().SetReadPreference(readpref.Primary())
-		if err := client.Database("admin").RunCommand(ctx, bson.D{{Key: "hello", Value: 1}}, opts).Decode(&result); err != nil {
+		// hello 是任意库都能执行的诊断命令，不需要 admin 授权，
+		// 因此优先在业务库上执行，避免只授权单库的部署因缺 admin 权限而失败。
+		database := client.Database(databaseName)
+		if err := database.RunCommand(ctx, bson.D{{Key: "hello", Value: 1}}, opts).Decode(&result); err != nil {
 			return time.Time{}, err
 		}
 		if result.LocalTime.IsZero() {
@@ -279,7 +282,7 @@ func (x *MongoStorage) serverTime(ctx context.Context) (time.Time, error) {
 	if x.client == nil {
 		return time.Time{}, ErrMongoNotInit
 	}
-	return mongoServerTime(x.client, ctx)
+	return mongoServerTime(x.client, x.options.DatabaseName, ctx)
 }
 
 func (x *MongoStorage) Close(ctx context.Context) error {
