@@ -6,7 +6,7 @@ require (
 	github.com/golang-infrastructure/go-iterator v0.0.0-20230524171120-56988a9b127c
 	github.com/storage-lock/go-ntp-time-provider v0.0.3
 	github.com/storage-lock/go-storage v0.1.0
-	github.com/storage-lock/go-storage-lock v0.0.6
+	github.com/storage-lock/go-storage-lock v0.1.0
 	github.com/stretchr/testify v1.11.1
 	go.mongodb.org/mongo-driver v1.12.1
 )
